@@ -51,7 +51,7 @@ class PosterSpec(BaseModel):
     metrics: list[MetricItem] = Field(default_factory=list)
     image_query: Optional[str] = None
     cta: str
-    footer_note: str = "chintu-work.vercel.app"
+    footer_note: str = ""
     accent_hex: str = "#3b82f6"
 
 
@@ -73,6 +73,14 @@ class GenerateResponse(BaseModel):
     trace: list[TraceStep]
 
 
+def _word_trim(text: str, limit: int) -> str:
+    cleaned = re.sub(r"\s+", " ", text or "").strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    trimmed = cleaned[: limit - 1].rsplit(" ", 1)[0]
+    return (trimmed if len(trimmed) > limit // 2 else cleaned[: limit - 1]).rstrip(".,;:-") + "…"
+
+
 def _extract_json_block(text: str) -> dict:
     text = text.strip()
     try:
@@ -90,9 +98,9 @@ def _clamp_spec(raw: dict, preferred_template: Optional[str]) -> PosterSpec:
     if template not in ("dark-tech", "clean-light", "bold-gradient"):
         template = "dark-tech"
 
-    bullets = [str(b).strip()[:90] for b in (raw.get("bullets") or []) if str(b).strip()][:3]
+    bullets = [_word_trim(str(b), 88) for b in (raw.get("bullets") or []) if str(b).strip()][:3]
     while len(bullets) < 3:
-        bullets.append("Production-ready AI workflow & deterministic validation")
+        bullets.append("Built for speed, reliability, and clear results")
 
     raw_metrics = raw.get("metrics") or []
     metrics: list[MetricItem] = []
@@ -100,8 +108,8 @@ def _clamp_spec(raw: dict, preferred_template: Optional[str]) -> PosterSpec:
         if isinstance(m, dict) and m.get("label") and m.get("value"):
             metrics.append(
                 MetricItem(
-                    label=str(m["label"]).strip()[:24],
-                    value=str(m["value"]).strip()[:14],
+                    label=_word_trim(str(m["label"]), 24),
+                    value=_word_trim(str(m["value"]), 14),
                 )
             )
 
@@ -118,24 +126,21 @@ def _clamp_spec(raw: dict, preferred_template: Optional[str]) -> PosterSpec:
 
     return PosterSpec(
         template=template,
-        badge=str(raw.get("badge") or "AI AGENT SHOWCASE").strip()[:36],
-        headline=str(raw.get("headline") or "Build Smarter AI Workflows").strip()[:78],
-        subhead=str(raw.get("subhead") or "Automated, observable, and ready for production.").strip()[:155],
+        badge=_word_trim(str(raw.get("badge") or "FEATURED LAUNCH"), 34),
+        headline=_word_trim(str(raw.get("headline") or "Built for Modern Teams"), 76),
+        subhead=_word_trim(str(raw.get("subhead") or "Fast, reliable automation tailored to your workflow."), 150),
         bullets=bullets,
         icon_queries=icon_queries,
         metrics=metrics,
-        image_query=str(raw.get("image_query") or "").strip()[:60] or None,
-        cta=str(raw.get("cta") or "Book a 15-min Call").strip()[:36],
-        footer_note=str(raw.get("footer_note") or "chintu-work.vercel.app").strip()[:45],
+        image_query=_word_trim(str(raw.get("image_query") or ""), 40) or None,
+        cta=_word_trim(str(raw.get("cta") or "Get Started Today"), 34),
+        footer_note=_word_trim(str(raw.get("footer_note") or ""), 45),
         accent_hex=accent,
     )
 
 
 def _deterministic_condense(text: str, limit: int = 1800) -> str:
-    cleaned = re.sub(r"\s+", " ", text).strip()
-    if len(cleaned) <= limit:
-        return cleaned
-    return cleaned[: limit - 3].rsplit(" ", 1)[0] + "..."
+    return _word_trim(text, limit)
 
 
 def _condense_with_agno(raw_brief: str) -> tuple[str, bool, str]:
@@ -157,15 +162,15 @@ def _condense_with_agno(raw_brief: str) -> tuple[str, bool, str]:
 
         summarizer = Agent(
             name="Brief Summarizer",
-            model=Groq(id="openai/gpt-oss-20b", max_tokens=280),
+            model=Groq(id="openai/gpt-oss-20b", max_tokens=320, reasoning_effort="low"),
             instructions=[
-                "Condense the user's long product/event brief into at most 150 words.",
-                "Preserve: target audience, core value proposition, key numbers/stats, 3 benefits, and CTA.",
-                "Output plain text only—no markdown headers.",
+                "Condense the user's long product/event brief into 3-4 clean sentences (at most 140 words).",
+                "Preserve: target audience, core value proposition, key numbers/stats, 3 benefits, and natural CTA/brand.",
+                "Output plain prose sentences only—no markdown headers or 'Target Audience:' labels.",
             ],
         )
         res = summarizer.run(
-            f"Condense this brief for a 1080x1350 infographic poster:\n\n{capped}"
+            f"Condense this brief for a marketing poster:\n\n{capped}"
         )
         summary = str(getattr(res, "content", "") or "").strip()
         if summary and len(summary) < len(capped):
@@ -187,7 +192,6 @@ def _condense_with_agno(raw_brief: str) -> tuple[str, bool, str]:
 
 
 async def _analyze_image_with_groq_vision(image_data_url: str) -> tuple[str, str]:
-    """Use Groq's qwen/qwen3.8-27b vision model to inspect an uploaded product/brand image."""
     api_key = os.getenv("GROQ_API_KEY", "").strip()
     if not api_key:
         return "", "GROQ_API_KEY missing; skipped vision analysis"
@@ -232,7 +236,10 @@ async def _fetch_single_iconify_svg(client: httpx.AsyncClient, query: str, accen
         if ":" not in icon_id:
             icon_id = f"lucide:{icon_id}"
         prefix, name = icon_id.split(":", 1)
-        svg_resp = await client.get(f"https://api.iconify.design/{prefix}/{name}.svg", params={"color": accent, "width": "28", "height": "28"})
+        svg_resp = await client.get(
+            f"https://api.iconify.design/{prefix}/{name}.svg",
+            params={"color": accent, "width": "28", "height": "28"},
+        )
         if svg_resp.status_code == 200 and "<svg" in svg_resp.text:
             return svg_resp.text
     except Exception:
@@ -247,51 +254,60 @@ async def _fetch_iconify_icons(queries: list[str], accent: str) -> tuple[list[Op
     return list(svgs), f"Fetched {found}/{len(queries[:3])} copyright-free Lucide SVGs from Iconify API"
 
 
+async def _search_wikimedia(client: httpx.AsyncClient, term: str) -> Optional[str]:
+    resp = await client.get(
+        "https://commons.wikimedia.org/w/api.php",
+        params={
+            "action": "query",
+            "generator": "search",
+            "gsrsearch": f"{term} filetype:bitmap",
+            "gsrnamespace": 6,
+            "gsrlimit": 5,
+            "prop": "imageinfo",
+            "iiprop": "url",
+            "iiurlwidth": 1080,
+            "format": "json",
+        },
+    )
+    pages = (resp.json().get("query") or {}).get("pages") or {}
+    for page in pages.values():
+        info = (page.get("imageinfo") or [{}])[0]
+        thumb = info.get("thumburl") or info.get("url")
+        if thumb and any(thumb.lower().endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp")):
+            return thumb
+    return None
+
+
 async def _fetch_wikimedia_image(query: str) -> tuple[Optional[str], Optional[str], str]:
-    """Fetch a CC/public-domain background photo from Wikimedia Commons (no API key required)."""
     try:
-        async with httpx.AsyncClient(timeout=4.0, headers={"User-Agent": "PosterAIAgent/2.0"}) as client:
-            resp = await client.get(
-                "https://commons.wikimedia.org/w/api.php",
-                params={
-                    "action": "query",
-                    "generator": "search",
-                    "gsrsearch": f"{query} filetype:bitmap",
-                    "gsrnamespace": 6,
-                    "gsrlimit": 3,
-                    "prop": "imageinfo",
-                    "iiprop": "url|extmetadata",
-                    "iiurlwidth": 1080,
-                    "format": "json",
-                },
-            )
-            pages = (resp.json().get("query") or {}).get("pages") or {}
-            for page in pages.values():
-                info = (page.get("imageinfo") or [{}])[0]
-                thumb = info.get("thumburl") or info.get("url")
-                if thumb and any(thumb.lower().endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp")):
-                    return thumb, "Wikimedia Commons (CC)", f"Matched copyright-free photo for '{query}'"
+        async with httpx.AsyncClient(timeout=4.5, headers={"User-Agent": "PosterAIAgent/2.0"}) as client:
+            for candidate in (query, query.split()[0] if query.split() else "technology", "abstract"):
+                thumb = await _search_wikimedia(client, candidate)
+                if thumb:
+                    return thumb, "Wikimedia Commons (CC)", f"Matched copyright-free photo for '{candidate}'"
         return None, None, f"No Wikimedia bitmap match for '{query}'; using clean typographic layout"
     except Exception as exc:
         return None, None, f"Stock image lookup skipped ({type(exc).__name__})"
 
 
 def _fallback_poster_spec(brief: str, preferred_template: Optional[str]) -> PosterSpec:
-    sentences = [s.strip() for s in re.split(r"[.!?\n]+", brief) if len(s.strip()) > 6]
-    pct_match = re.search(r"(\d+%)", brief)
-    metrics = [MetricItem(label="Impact", value=pct_match.group(1))] if pct_match else []
+    cleaned = re.sub(r"\b(Target Audience|Core Value Proposition|Key Numbers/Stats|Benefits|CTA):\s*", "", brief, flags=re.I)
+    sentences = [s.strip() for s in re.split(r"[.!?\n]+", cleaned) if len(s.strip()) > 8]
+    pct_match = re.search(r"(\d+%)", cleaned)
+    domain_match = re.search(r"\b([a-z0-9-]+\.(?:ai|io|com|dev|app|org))\b", cleaned, re.I)
+    metrics = [MetricItem(label="Key Impact", value=pct_match.group(1))] if pct_match else []
     return _clamp_spec(
         {
             "template": preferred_template or "dark-tech",
-            "badge": "AI AGENT SHOWCASE",
-            "headline": sentences[0] if sentences else "Launch Faster with Autonomous AI Agents",
-            "subhead": sentences[1] if len(sentences) > 1 else "Production-ready workflows built with Agno, Groq, and clean APIs.",
+            "badge": "PRODUCT HIGHLIGHT",
+            "headline": sentences[0] if sentences else "Automate Your Workflow Faster",
+            "subhead": sentences[1] if len(sentences) > 1 else "Built for teams that want reliable, measurable results.",
             "bullets": sentences[2:5],
             "icon_queries": ["zap", "shield-check", "rocket"],
             "metrics": [m.model_dump() for m in metrics],
-            "image_query": "technology abstract dark",
-            "cta": "Book a 15-min Call",
-            "footer_note": "chintu-work.vercel.app",
+            "image_query": "server",
+            "cta": "Learn More",
+            "footer_note": domain_match.group(1).lower() if domain_match else "",
             "accent_hex": "#3b82f6",
         },
         preferred_template,
@@ -332,7 +348,7 @@ def render_poster_html(
     bg_layer = ""
     if hero_image_url and not hero_image_url.startswith("data:image/png;base64,"):
         bg_layer = f"""
-        <div style="position:absolute;inset:0;background-image:url('{esc(hero_image_url)}');background-size:cover;background-position:center;opacity:0.22;z-index:0;"></div>
+        <div style="position:absolute;inset:0;background-image:url('{esc(hero_image_url)}');background-size:cover;background-position:center;opacity:0.24;z-index:0;"></div>
         <div style="position:absolute;inset:0;background:{scrim};z-index:0;"></div>
         """
 
@@ -348,7 +364,7 @@ def render_poster_html(
     if spec.metrics:
         metric_cards = "".join(
             f"""
-            <div style="flex:1;padding:20px 24px;border-radius:18px;background:{card_bg};border:1px solid {border};">
+            <div style="flex:1;max-width:340px;padding:20px 24px;border-radius:18px;background:{card_bg};border:1px solid {border};">
               <div style="font-size:40px;font-weight:800;color:{accent};line-height:1.1;">{esc(m.value)}</div>
               <div style="font-size:20px;color:{muted};margin-top:6px;font-weight:600;">{esc(m.label)}</div>
             </div>
@@ -369,7 +385,12 @@ def render_poster_html(
         for i, b in enumerate(spec.bullets)
     )
 
-    credit_html = f'<span style="font-size:16px;color:{muted};display:block;margin-top:4px;">Photo: {esc(image_credit)}</span>' if image_credit else ""
+    credit_html = f'<span style="font-size:15px;color:{muted};display:block;margin-top:4px;">Photo: {esc(image_credit)}</span>' if image_credit else ""
+    footer_right = (
+        f'<div style="text-align:right;font-size:22px;color:{muted};font-weight:600;">{esc(spec.footer_note)}{credit_html}</div>'
+        if (spec.footer_note or image_credit)
+        else ""
+    )
 
     return f"""<!doctype html>
 <html lang="en">
@@ -422,10 +443,7 @@ def render_poster_html(
       <div style="padding:18px 32px;border-radius:16px;background:{accent};color:#ffffff;font-size:24px;font-weight:700;white-space:nowrap;">
         {esc(spec.cta)} &rarr;
       </div>
-      <div style="text-align:right;font-size:22px;color:{muted};font-weight:600;">
-        {esc(spec.footer_note)}
-        {credit_html}
-      </div>
+      {footer_right}
     </div>
   </div>
 </body>
@@ -453,7 +471,7 @@ async def render_poster_png(html_content: str) -> tuple[Optional[str], str]:
 def health():
     return {
         "status": "ok",
-        "version": "2.0",
+        "version": "2.1",
         "groq_configured": bool(os.getenv("GROQ_API_KEY", "").strip()),
         "summary_char_threshold": SUMMARY_CHAR_THRESHOLD,
     }
@@ -466,7 +484,6 @@ async def generate_poster(req: GenerateRequest):
     trace: list[TraceStep] = []
     original_chars = len(req.brief)
 
-    # Step 1: Summarization Guard
     t0 = time.perf_counter()
     effective_brief, summarized, summary_detail = _condense_with_agno(req.brief)
     trace.append(
@@ -478,7 +495,6 @@ async def generate_poster(req: GenerateRequest):
         )
     )
 
-    # Step 2: Optional Groq Vision inspection if user supplied an image
     vision_context = ""
     if req.image_data_url:
         tv = time.perf_counter()
@@ -492,7 +508,6 @@ async def generate_poster(req: GenerateRequest):
             )
         )
 
-    # Step 3: Agno Poster Agent -> PosterSpec
     t1 = time.perf_counter()
     mode: Literal["live", "fallback"] = "live"
     spec: Optional[PosterSpec] = None
@@ -505,10 +520,15 @@ async def generate_poster(req: GenerateRequest):
 
             poster_agent = Agent(
                 name="Poster Copy & Infographic Agent",
-                model=Groq(id="openai/gpt-oss-120b", max_tokens=750),
+                model=Groq(
+                    id="openai/gpt-oss-120b",
+                    max_tokens=1500,
+                    reasoning_effort="low",
+                    response_format={"type": "json_object"},
+                ),
                 instructions=[
                     "You design high-converting 1080x1350 marketing posters. Output ONLY a valid JSON object.",
-                    "Keys: template ('dark-tech', 'clean-light', or 'bold-gradient'), badge (<=30 chars), headline (<=70 chars), subhead (<=140 chars), bullets (array of 3 concise items <=80 chars each), icon_queries (3 Lucide icon names like 'zap', 'shield-check', 'rocket'), metrics (array of up to 2 {label, value} KPI objects extracted from the brief, or empty), image_query (2-3 word stock photo search phrase), cta (<=30 chars), footer_note, accent_hex.",
+                    "Keys: template ('dark-tech', 'clean-light', or 'bold-gradient'), badge (<=30 chars), headline (<=70 chars), subhead (<=140 chars), bullets (3 concise items <=80 chars each), icon_queries (3 Lucide icon names like 'zap', 'shield-check', 'rocket'), metrics (up to 3 {label, value} KPI objects extracted from numbers in the brief), image_query (1-2 word literal photo noun like 'laptop' or 'server'), cta (natural CTA from the user's brief <=30 chars), footer_note (brand/domain from the brief or empty string), accent_hex.",
                 ],
             )
             prompt = f"Preferred template: {req.template or 'auto'}\n\nBrief:\n{effective_brief}"
@@ -527,7 +547,7 @@ async def generate_poster(req: GenerateRequest):
                     step="agno_poster_agent",
                     status="completed",
                     duration_ms=int((time.perf_counter() - t1) * 1000),
-                    detail="Generated & clamped PosterSpec via Agno + Groq (gpt-oss-120b)",
+                    detail="Generated & validated PosterSpec via Agno + Groq (gpt-oss-120b)",
                 )
             )
         except Exception as exc:
@@ -555,7 +575,6 @@ async def generate_poster(req: GenerateRequest):
 
     assert spec is not None
 
-    # Step 4: Fetch copyright-free Iconify icons + Wikimedia stock photo in parallel
     ta = time.perf_counter()
     hero_image_url = req.image_data_url
     image_credit: Optional[str] = None
@@ -577,7 +596,6 @@ async def generate_poster(req: GenerateRequest):
         )
     )
 
-    # Step 5: Render deterministic HTML
     t2 = time.perf_counter()
     poster_html = render_poster_html(spec, icon_svgs, hero_image_url, image_credit)
     trace.append(
@@ -589,7 +607,6 @@ async def generate_poster(req: GenerateRequest):
         )
     )
 
-    # Step 6: Render PNG via Cloudflare Worker
     png_data_url: Optional[str] = None
     if req.render_png:
         t3 = time.perf_counter()

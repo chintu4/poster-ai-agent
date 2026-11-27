@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Poster AI Agent — Agno + Groq + Cloudflare Worker</title>
+  <title>Poster AI Agent v2 — Agno + Groq Vision + Copyright-Free Assets</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="min-h-screen bg-zinc-50 text-zinc-900 antialiased">
@@ -11,11 +11,11 @@
     <header class="bg-white border border-zinc-200 rounded-3xl p-6 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
       <div>
         <div class="inline-flex items-center gap-2 text-xs font-semibold text-blue-600 bg-blue-50 border border-blue-100 px-3 py-1 rounded-full mb-2">
-          Agno + Groq + Cloudflare Worker
+          Agno + Groq Vision + Iconify + Wikimedia + Cloudflare Worker
         </div>
-        <h1 class="text-2xl font-extrabold tracking-tight">Poster AI Agent</h1>
+        <h1 class="text-2xl font-extrabold tracking-tight">Poster AI Agent v2</h1>
         <p class="text-xs text-zinc-500 mt-1">
-          Includes an automatic summarization guard to prevent Groq token-window overflows on long briefs.
+          Summarization guard, dynamic KPI infographics, copyright-free icons &amp; stock photos, Groq Vision, and in-browser background removal.
         </p>
       </div>
       <div class="flex items-center gap-2.5">
@@ -43,8 +43,26 @@
 
         <div class="space-y-1.5">
           <label for="brief" class="text-xs font-semibold uppercase tracking-wider text-zinc-400">Product or Event Brief</label>
-          <textarea id="brief" rows="6" class="w-full rounded-2xl border border-zinc-200 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Describe your product, offer, or paste a long doc..."></textarea>
+          <textarea id="brief" rows="5" class="w-full rounded-2xl border border-zinc-200 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Describe your product, metrics (e.g. 80% faster), or paste a long doc..."></textarea>
           <p id="charCount" class="text-[11px] text-zinc-400">0 chars (summarization guard triggers above 2,000 chars)</p>
+        </div>
+
+        <div class="p-3.5 rounded-2xl border border-zinc-200 bg-zinc-50/70 space-y-2.5">
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-semibold uppercase tracking-wider text-zinc-500">Product Image (Optional • Groq Vision)</label>
+            <button id="clearImgBtn" type="button" onclick="clearUploadedImage()" class="hidden text-[11px] text-red-600 font-semibold">Clear</button>
+          </div>
+          <input id="imageInput" type="file" accept="image/*" class="block w-full text-xs text-zinc-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-zinc-200 file:text-zinc-800 hover:file:bg-zinc-300" />
+          <div class="flex items-center justify-between gap-2">
+            <button id="removeBgBtn" type="button" onclick="removeBackgroundInBrowser()" class="hidden px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-[11px] font-semibold">
+              Remove Background (In-Browser)
+            </button>
+            <span id="bgStatus" class="text-[11px] text-zinc-500"></span>
+          </div>
+          <label class="flex items-center gap-2 text-xs text-zinc-600 pt-1">
+            <input id="stockToggle" type="checkbox" checked class="rounded border-zinc-300" />
+            <span>Auto-fetch copyright-free Wikimedia photo if no image uploaded</span>
+          </label>
         </div>
 
         <div class="space-y-1.5">
@@ -65,7 +83,7 @@
         <div class="pt-3 border-t border-zinc-100 space-y-2">
           <h2 class="text-xs font-semibold uppercase tracking-wider text-zinc-400">Live Agent Trace</h2>
           <div id="traceList" class="space-y-2 text-xs text-zinc-500">
-            Click a preset or Generate to inspect the Agno + Summarizer trace.
+            Click a preset or Generate to inspect the Agno + Vision + Asset trace.
           </div>
         </div>
       </div>
@@ -92,22 +110,66 @@
 
   <script>
     const PRESETS = {
-      saas: "Launching ScoutFlow: Autonomous Customer Support Triage for Shopify & SaaS teams. Cuts first-response time by 80%. Built-in human-in-the-loop refund approvals, Shopify order lookup, and Slack alerts. Start a 14-day free pilot at scoutflow.ai.",
+      saas: "Launching ScoutFlow: Autonomous Customer Support Triage for Shopify & SaaS teams. Cuts first-response time by 80% and saves 12 hrs/week. Built-in human-in-the-loop refund approvals, Shopify order lookup, and Slack alerts. Start a 14-day free pilot at scoutflow.ai.",
       workshop: "Live Hands-On Workshop: Build Production AI Agents with Agno, Groq & WebMCP. Saturday 11 AM IST. Learn Pydantic structured outputs, token-window summarization guards, and Cloudflare Workers deployment. Limited to 25 engineers.",
       long: ("Enterprise AI Modernization & Agentic Automation Program — " +
         "We help B2B SaaS teams, healthcare startups, and logistics operators replace brittle manual workflows with observable, deterministic AI agent pipelines. " +
-        "Our architecture combines Agno multi-step agents, Groq sub-second inference, Pydantic schema validation, SSRF-safe web extraction, and Cloudflare Workers edge rendering. " +
-        "Key deliverables include custom MCP servers, browser-native WebMCP tool registration, automated evaluation suites, and human-in-the-loop approval gates for sensitive actions. ").repeat(8)
+        "Cuts manual ops by 65% in 14 days. Our architecture combines Agno multi-step agents, Groq sub-second inference, Pydantic schema validation, SSRF-safe web extraction, and Cloudflare Workers edge rendering. " +
+        "Key deliverables include custom MCP servers, browser-native WebMCP tool registration, automated evaluation suites, and human-in-the-loop approval gates. ").repeat(8)
     };
 
     const briefEl = document.getElementById("brief");
     const charEl = document.getElementById("charCount");
+    let uploadedImageDataUrl = null;
 
     function updateCharCount() {
       const len = briefEl.value.length;
       charEl.textContent = `${len.toLocaleString()} chars (summarization guard triggers above 2,000 chars)`;
     }
     briefEl.addEventListener("input", updateCharCount);
+
+    document.getElementById("imageInput").addEventListener("change", (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        uploadedImageDataUrl = reader.result;
+        document.getElementById("removeBgBtn").classList.remove("hidden");
+        document.getElementById("clearImgBtn").classList.remove("hidden");
+        document.getElementById("bgStatus").textContent = "Image loaded (ready for Groq Vision)";
+      };
+      reader.readAsDataURL(file);
+    });
+
+    function clearUploadedImage() {
+      uploadedImageDataUrl = null;
+      document.getElementById("imageInput").value = "";
+      document.getElementById("removeBgBtn").classList.add("hidden");
+      document.getElementById("clearImgBtn").classList.add("hidden");
+      document.getElementById("bgStatus").textContent = "";
+    }
+
+    async function removeBackgroundInBrowser() {
+      if (!uploadedImageDataUrl) return;
+      const statusEl = document.getElementById("bgStatus");
+      const btn = document.getElementById("removeBgBtn");
+      btn.disabled = true;
+      statusEl.textContent = "Loading WebAssembly background remover...";
+      try {
+        const mod = await import("https://esm.sh/@imgly/background-removal@1.5.5");
+        const blob = await mod.removeBackground(uploadedImageDataUrl);
+        const reader = new FileReader();
+        reader.onload = () => {
+          uploadedImageDataUrl = reader.result;
+          statusEl.textContent = "Background removed (transparent PNG ready)";
+          btn.disabled = false;
+        };
+        reader.readAsDataURL(blob);
+      } catch (err) {
+        statusEl.textContent = "BG removal failed: " + err.message;
+        btn.disabled = false;
+      }
+    }
 
     function loadPreset(key) {
       briefEl.value = PRESETS[key];
@@ -125,7 +187,7 @@
 
       btn.disabled = true;
       btn.textContent = "Running Agno Agent...";
-      traceList.innerHTML = "<div class='text-blue-600'>Running summarization guard & Agno agent...</div>";
+      traceList.innerHTML = "<div class='text-blue-600'>Running summarization guard, Agno agent &amp; asset fetchers...</div>";
 
       try {
         const res = await fetch("/api/generate", {
@@ -134,6 +196,8 @@
           body: JSON.stringify({
             brief,
             template: document.getElementById("template").value || null,
+            image_data_url: uploadedImageDataUrl,
+            include_stock_image: document.getElementById("stockToggle").checked,
             render_png: true
           })
         });

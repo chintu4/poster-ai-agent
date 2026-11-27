@@ -11,9 +11,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent
-from agno.models.groq import Groq
-
 WORKER_URL = os.getenv(
     "HTML_TO_PNG_WORKER_URL",
     "https://html-to-png-worker.chintusharma00014.workers.dev/",
@@ -85,7 +82,6 @@ def _deterministic_condense(text: str, limit: int = 1800) -> str:
 
 
 def _condense_with_agno(raw_brief: str) -> tuple[str, bool, str]:
-    """Summarize long inputs before the main agent call to prevent Groq TPM/context overflow."""
     capped = raw_brief[:MAX_RAW_CHARS]
     if len(capped) <= SUMMARY_CHAR_THRESHOLD:
         return capped, False, "Within Groq token budget; passed directly"
@@ -99,6 +95,9 @@ def _condense_with_agno(raw_brief: str) -> tuple[str, bool, str]:
         )
 
     try:
+        from agno.agent import Agent
+        from agno.models.groq import Groq
+
         summarizer = Agent(
             name="Brief Summarizer",
             model=Groq(id="openai/gpt-oss-20b", max_tokens=280),
@@ -132,7 +131,7 @@ def _condense_with_agno(raw_brief: str) -> tuple[str, bool, str]:
 
 def _fallback_poster_spec(brief: str, preferred_template: Optional[str]) -> PosterSpec:
     sentences = [s.strip() for s in re.split(r"[.!?\n]+", brief) if len(s.strip()) > 6]
-    headline = (sentences[0][:68] if sentences else "Launch Faster with Autonomous AI Agents")
+    headline = sentences[0][:68] if sentences else "Launch Faster with Autonomous AI Agents"
     subhead = (
         sentences[1][:145]
         if len(sentences) > 1
@@ -148,7 +147,7 @@ def _fallback_poster_spec(brief: str, preferred_template: Optional[str]) -> Post
         bullets.append(defaults[len(bullets)])
 
     return PosterSpec(
-        template=preferred_template or "dark-tech",  # type: ignore[arg-type]
+        template=preferred_template or "dark-tech",
         badge="AI AGENT SHOWCASE",
         headline=headline,
         subhead=subhead,
@@ -270,7 +269,6 @@ async def generate_poster(req: GenerateRequest):
     trace: list[TraceStep] = []
     original_chars = len(req.brief)
 
-    # Step 1: Token-window guard & summarization layer
     t0 = time.perf_counter()
     effective_brief, summarized, summary_detail = _condense_with_agno(req.brief)
     trace.append(
@@ -282,7 +280,6 @@ async def generate_poster(req: GenerateRequest):
         )
     )
 
-    # Step 2: Agno Poster Agent -> Pydantic PosterSpec
     t1 = time.perf_counter()
     mode: Literal["live", "fallback"] = "live"
     spec: Optional[PosterSpec] = None
@@ -290,6 +287,9 @@ async def generate_poster(req: GenerateRequest):
 
     if api_key:
         try:
+            from agno.agent import Agent
+            from agno.models.groq import Groq
+
             poster_agent = Agent(
                 name="Poster Copy & Layout Agent",
                 model=Groq(id="openai/gpt-oss-120b", max_tokens=650),
@@ -347,7 +347,6 @@ async def generate_poster(req: GenerateRequest):
 
     assert spec is not None
 
-    # Step 3: Deterministic HTML render
     t2 = time.perf_counter()
     poster_html = render_poster_html(spec)
     trace.append(
@@ -359,7 +358,6 @@ async def generate_poster(req: GenerateRequest):
         )
     )
 
-    # Step 4: Cloudflare Worker PNG render
     png_data_url: Optional[str] = None
     if req.render_png:
         t3 = time.perf_counter()

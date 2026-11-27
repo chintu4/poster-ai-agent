@@ -137,9 +137,21 @@
             render_png: true
           })
         });
-        const data = await res.json();
 
-        traceList.innerHTML = data.trace.map(t => `
+        const rawText = await res.text();
+        let data = {};
+        try {
+          data = JSON.parse(rawText);
+        } catch {
+          throw new Error(`HTTP ${res.status}: ${rawText.slice(0, 220)}`);
+        }
+
+        if (!res.ok) {
+          throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+        }
+
+        const steps = Array.isArray(data.trace) ? data.trace : [];
+        traceList.innerHTML = steps.map(t => `
           <div class="p-2.5 rounded-xl border border-zinc-200 bg-zinc-50 flex items-start justify-between gap-2">
             <div>
               <div class="font-semibold text-zinc-800">${t.step} <span class="text-[10px] px-1.5 py-0.5 rounded bg-zinc-200">${t.status}</span></div>
@@ -149,13 +161,13 @@
           </div>
         `).join("");
 
-        document.getElementById("jsonOut").textContent = JSON.stringify(data.spec, null, 2);
+        document.getElementById("jsonOut").textContent = JSON.stringify(data.spec || {}, null, 2);
 
         if (data.png_data_url) {
           previewBox.innerHTML = `<img src="${data.png_data_url}" alt="Generated Poster" class="w-full h-full object-contain" />`;
           downloadLink.href = data.png_data_url;
           downloadLink.classList.remove("hidden");
-        } else {
+        } else if (data.html) {
           downloadLink.classList.add("hidden");
           previewBox.innerHTML = `<iframe class="w-full h-full border-0" sandbox="allow-same-origin" srcdoc="${data.html.replace(/"/g, '&quot;')}"></iframe>`;
         }

@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Poster AI Agent — Agno + Groq + Cloudflare Worker</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-zinc-50 text-zinc-900 antialiased">
+  <main class="max-w-5xl mx-auto p-4 sm:p-8 space-y-6">
+    <header class="bg-white border border-zinc-200 rounded-3xl p-6 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div>
+        <div class="inline-flex items-center gap-2 text-xs font-semibold text-blue-600 bg-blue-50 border border-blue-100 px-3 py-1 rounded-full mb-2">
+          Agno + Groq + Cloudflare Worker
+        </div>
+        <h1 class="text-2xl font-extrabold tracking-tight">Poster AI Agent</h1>
+        <p class="text-xs text-zinc-500 mt-1">
+          Includes an automatic summarization guard to prevent Groq token-window overflows on long briefs.
+        </p>
+      </div>
+      <div class="flex items-center gap-2.5">
+        <a href="https://github.com/chintu4/poster-ai-agent" target="_blank" rel="noreferrer"
+           class="px-3.5 py-2 rounded-xl border border-zinc-200 bg-white hover:bg-zinc-50 text-xs font-semibold text-zinc-800">
+          View Code
+        </a>
+        <a href="https://cal.com/chintu-sharma-qgagt9/15min" target="_blank" rel="noreferrer"
+           class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-xs font-semibold text-white">
+          Book 15-min Call
+        </a>
+      </div>
+    </header>
+
+    <section class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div class="lg:col-span-5 bg-white border border-zinc-200 rounded-3xl p-6 shadow-sm space-y-4">
+        <div class="space-y-2">
+          <label class="text-xs font-semibold uppercase tracking-wider text-zinc-400">1-Click Presets</label>
+          <div class="flex flex-wrap gap-2">
+            <button type="button" onclick="loadPreset('saas')" class="px-3 py-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 text-xs font-medium">SaaS Launch</button>
+            <button type="button" onclick="loadPreset('workshop')" class="px-3 py-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 text-xs font-medium">AI Workshop</button>
+            <button type="button" onclick="loadPreset('long')" class="px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-medium">Long Brief (Test Summarizer)</button>
+          </div>
+        </div>
+
+        <div class="space-y-1.5">
+          <label for="brief" class="text-xs font-semibold uppercase tracking-wider text-zinc-400">Product or Event Brief</label>
+          <textarea id="brief" rows="6" class="w-full rounded-2xl border border-zinc-200 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Describe your product, offer, or paste a long doc..."></textarea>
+          <p id="charCount" class="text-[11px] text-zinc-400">0 chars (summarization guard triggers above 2,000 chars)</p>
+        </div>
+
+        <div class="space-y-1.5">
+          <label for="template" class="text-xs font-semibold uppercase tracking-wider text-zinc-400">Template</label>
+          <select id="template" class="w-full rounded-xl border border-zinc-200 px-3 py-2 text-xs font-medium bg-white">
+            <option value="">Auto (Agent chooses)</option>
+            <option value="dark-tech">Dark Tech</option>
+            <option value="clean-light">Clean Light</option>
+            <option value="bold-gradient">Bold Gradient</option>
+          </select>
+        </div>
+
+        <button id="generateBtn" type="button" onclick="generatePoster()"
+          class="w-full py-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold transition-all">
+          Generate 1080×1350 Poster
+        </button>
+
+        <div class="pt-3 border-t border-zinc-100 space-y-2">
+          <h2 class="text-xs font-semibold uppercase tracking-wider text-zinc-400">Live Agent Trace</h2>
+          <div id="traceList" class="space-y-2 text-xs text-zinc-500">
+            Click a preset or Generate to inspect the Agno + Summarizer trace.
+          </div>
+        </div>
+      </div>
+
+      <div class="lg:col-span-7 bg-white border border-zinc-200 rounded-3xl p-6 shadow-sm flex flex-col justify-between space-y-4">
+        <div class="flex items-center justify-between">
+          <h2 class="text-xs font-semibold uppercase tracking-wider text-zinc-400">Rendered Poster (1080×1350)</h2>
+          <a id="downloadLink" href="#" download="poster.png" class="hidden px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold">
+            Download PNG
+          </a>
+        </div>
+
+        <div id="previewBox" class="w-full aspect-[4/5] rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 flex items-center justify-center overflow-hidden">
+          <span class="text-xs text-zinc-400">Your generated poster will appear here</span>
+        </div>
+
+        <details class="text-xs text-zinc-500">
+          <summary class="cursor-pointer font-semibold text-zinc-700">Inspect Validated Pydantic JSON</summary>
+          <pre id="jsonOut" class="mt-2 p-3 rounded-xl bg-zinc-900 text-zinc-100 overflow-x-auto text-[11px]">{}</pre>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const PRESETS = {
+      saas: "Launching ScoutFlow: Autonomous Customer Support Triage for Shopify & SaaS teams. Cuts first-response time by 80%. Built-in human-in-the-loop refund approvals, Shopify order lookup, and Slack alerts. Start a 14-day free pilot at scoutflow.ai.",
+      workshop: "Live Hands-On Workshop: Build Production AI Agents with Agno, Groq & WebMCP. Saturday 11 AM IST. Learn Pydantic structured outputs, token-window summarization guards, and Cloudflare Workers deployment. Limited to 25 engineers.",
+      long: ("Enterprise AI Modernization & Agentic Automation Program — " +
+        "We help B2B SaaS teams, healthcare startups, and logistics operators replace brittle manual workflows with observable, deterministic AI agent pipelines. " +
+        "Our architecture combines Agno multi-step agents, Groq sub-second inference, Pydantic schema validation, SSRF-safe web extraction, and Cloudflare Workers edge rendering. " +
+        "Key deliverables include custom MCP servers, browser-native WebMCP tool registration, automated evaluation suites, and human-in-the-loop approval gates for sensitive actions. ").repeat(8)
+    };
+
+    const briefEl = document.getElementById("brief");
+    const charEl = document.getElementById("charCount");
+
+    function updateCharCount() {
+      const len = briefEl.value.length;
+      charEl.textContent = `${len.toLocaleString()} chars (summarization guard triggers above 2,000 chars)`;
+    }
+    briefEl.addEventListener("input", updateCharCount);
+
+    function loadPreset(key) {
+      briefEl.value = PRESETS[key];
+      updateCharCount();
+      generatePoster();
+    }
+
+    async function generatePoster() {
+      const brief = briefEl.value.trim();
+      if (brief.length < 5) return alert("Please enter a brief first.");
+      const btn = document.getElementById("generateBtn");
+      const traceList = document.getElementById("traceList");
+      const previewBox = document.getElementById("previewBox");
+      const downloadLink = document.getElementById("downloadLink");
+
+      btn.disabled = true;
+      btn.textContent = "Running Agno Agent...";
+      traceList.innerHTML = "<div class='text-blue-600'>Running summarization guard & Agno agent...</div>";
+
+      try {
+        const res = await fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            brief,
+            template: document.getElementById("template").value || null,
+            render_png: true
+          })
+        });
+        const data = await res.json();
+
+        traceList.innerHTML = data.trace.map(t => `
+          <div class="p-2.5 rounded-xl border border-zinc-200 bg-zinc-50 flex items-start justify-between gap-2">
+            <div>
+              <div class="font-semibold text-zinc-800">${t.step} <span class="text-[10px] px-1.5 py-0.5 rounded bg-zinc-200">${t.status}</span></div>
+              <div class="text-[11px] text-zinc-600 mt-0.5">${t.detail}</div>
+            </div>
+            <span class="text-[11px] font-mono text-zinc-500 shrink-0">${t.duration_ms}ms</span>
+          </div>
+        `).join("");
+
+        document.getElementById("jsonOut").textContent = JSON.stringify(data.spec, null, 2);
+
+        if (data.png_data_url) {
+          previewBox.innerHTML = `<img src="${data.png_data_url}" alt="Generated Poster" class="w-full h-full object-contain" />`;
+          downloadLink.href = data.png_data_url;
+          downloadLink.classList.remove("hidden");
+        } else {
+          downloadLink.classList.add("hidden");
+          previewBox.innerHTML = `<iframe class="w-full h-full border-0" sandbox="allow-same-origin" srcdoc="${data.html.replace(/"/g, '&quot;')}"></iframe>`;
+        }
+      } catch (err) {
+        traceList.innerHTML = `<div class="text-red-600">Error: ${err.message}</div>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Generate 1080×1350 Poster";
+      }
+    }
+  </script>
+</body>
+</html>

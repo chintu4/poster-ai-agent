@@ -19,7 +19,7 @@ WORKER_URL = os.getenv(
 SUMMARY_CHAR_THRESHOLD = 2000
 MAX_RAW_CHARS = 12000
 
-app = FastAPI(title="Poster AI Agent v2 (Agno + Groq)")
+app = FastAPI(title="Poster AI Agent v2.2 (Agno + Groq + Infographics)")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -41,6 +41,12 @@ class MetricItem(BaseModel):
     value: str
 
 
+class InfographicItem(BaseModel):
+    label: str
+    value: str
+    percent: int = Field(default=75, ge=5, le=100)
+
+
 class PosterSpec(BaseModel):
     template: Literal["dark-tech", "clean-light", "bold-gradient"] = "dark-tech"
     badge: str
@@ -49,6 +55,9 @@ class PosterSpec(BaseModel):
     bullets: list[str] = Field(..., min_length=2, max_length=4)
     icon_queries: list[str] = Field(default_factory=lambda: ["zap", "shield-check", "rocket"])
     metrics: list[MetricItem] = Field(default_factory=list)
+    infographic_type: Literal["bars", "donut", "steps"] = "bars"
+    infographic_title: str = "Key Impact"
+    infographic_items: list[InfographicItem] = Field(default_factory=list)
     image_query: Optional[str] = None
     cta: str
     footer_note: str = ""
@@ -93,14 +102,14 @@ def _extract_json_block(text: str) -> dict:
     raise ValueError("No valid JSON object found in model output")
 
 
-def _clamp_spec(raw: dict, preferred_template: Optional[str]) -> PosterSpec:
+def _clamp_spec(raw: dict, preferred_template: Optional[str] = None) -> PosterSpec:
     template = preferred_template or raw.get("template") or "dark-tech"
     if template not in ("dark-tech", "clean-light", "bold-gradient"):
         template = "dark-tech"
 
-    bullets = [_word_trim(str(b), 88) for b in (raw.get("bullets") or []) if str(b).strip()][:3]
+    bullets = [_word_trim(str(b), 78) for b in (raw.get("bullets") or []) if str(b).strip()][:3]
     while len(bullets) < 3:
-        bullets.append("Built for speed, reliability, and clear results")
+        bullets.append("Built for speed, reliability, and measurable results")
 
     raw_metrics = raw.get("metrics") or []
     metrics: list[MetricItem] = []
@@ -108,10 +117,35 @@ def _clamp_spec(raw: dict, preferred_template: Optional[str]) -> PosterSpec:
         if isinstance(m, dict) and m.get("label") and m.get("value"):
             metrics.append(
                 MetricItem(
-                    label=_word_trim(str(m["label"]), 24),
+                    label=_word_trim(str(m["label"]), 22),
                     value=_word_trim(str(m["value"]), 14),
                 )
             )
+
+    inf_type = str(raw.get("infographic_type") or "bars").lower().strip()
+    if inf_type not in ("bars", "donut", "steps"):
+        inf_type = "bars"
+
+    inf_items: list[InfographicItem] = []
+    for item in (raw.get("infographic_items") or [])[:4]:
+        if isinstance(item, dict) and item.get("label"):
+            try:
+                pct = int(float(str(item.get("percent", 75)).replace("%", "")))
+            except Exception:
+                pct = 75
+            pct = max(8, min(100, pct))
+            inf_items.append(
+                InfographicItem(
+                    label=_word_trim(str(item["label"]), 26),
+                    value=_word_trim(str(item.get("value") or f"{pct}%"), 14),
+                    percent=pct,
+                )
+            )
+    if not inf_items:
+        inf_items = [
+            InfographicItem(label=b.split(":")[0][:24] if ":" in b else _word_trim(b, 24), value=f"{88 - i*14}%", percent=88 - i * 14)
+            for i, b in enumerate(bullets[:3])
+        ]
 
     icon_queries = [
         re.sub(r"[^a-z0-9-]", "", str(q).lower().strip().replace(" ", "-")) or "sparkles"
@@ -127,11 +161,14 @@ def _clamp_spec(raw: dict, preferred_template: Optional[str]) -> PosterSpec:
     return PosterSpec(
         template=template,
         badge=_word_trim(str(raw.get("badge") or "FEATURED LAUNCH"), 34),
-        headline=_word_trim(str(raw.get("headline") or "Built for Modern Teams"), 76),
-        subhead=_word_trim(str(raw.get("subhead") or "Fast, reliable automation tailored to your workflow."), 150),
+        headline=_word_trim(str(raw.get("headline") or "Built for Modern Teams"), 70),
+        subhead=_word_trim(str(raw.get("subhead") or "Fast, reliable automation tailored to your workflow."), 135),
         bullets=bullets,
         icon_queries=icon_queries,
         metrics=metrics,
+        infographic_type=inf_type,
+        infographic_title=_word_trim(str(raw.get("infographic_title") or "Key Impact"), 32),
+        infographic_items=inf_items,
         image_query=_word_trim(str(raw.get("image_query") or ""), 40) or None,
         cta=_word_trim(str(raw.get("cta") or "Get Started Today"), 34),
         footer_note=_word_trim(str(raw.get("footer_note") or ""), 45),
@@ -169,9 +206,7 @@ def _condense_with_agno(raw_brief: str) -> tuple[str, bool, str]:
                 "Output plain prose sentences only—no markdown headers or 'Target Audience:' labels.",
             ],
         )
-        res = summarizer.run(
-            f"Condense this brief for a marketing poster:\n\n{capped}"
-        )
+        res = summarizer.run(f"Condense this brief for a marketing poster:\n\n{capped}")
         summary = str(getattr(res, "content", "") or "").strip()
         if summary and len(summary) < len(capped):
             return (
@@ -238,7 +273,7 @@ async def _fetch_single_iconify_svg(client: httpx.AsyncClient, query: str, accen
         prefix, name = icon_id.split(":", 1)
         svg_resp = await client.get(
             f"https://api.iconify.design/{prefix}/{name}.svg",
-            params={"color": accent, "width": "28", "height": "28"},
+            params={"color": accent, "width": "24", "height": "24"},
         )
         if svg_resp.status_code == 200 and "<svg" in svg_resp.text:
             return svg_resp.text
@@ -280,7 +315,7 @@ async def _search_wikimedia(client: httpx.AsyncClient, term: str) -> Optional[st
 
 async def _fetch_wikimedia_image(query: str) -> tuple[Optional[str], Optional[str], str]:
     try:
-        async with httpx.AsyncClient(timeout=4.5, headers={"User-Agent": "PosterAIAgent/2.0"}) as client:
+        async with httpx.AsyncClient(timeout=4.5, headers={"User-Agent": "PosterAIAgent/2.2"}) as client:
             for candidate in (query, query.split()[0] if query.split() else "technology", "abstract"):
                 thumb = await _search_wikimedia(client, candidate)
                 if thumb:
@@ -296,6 +331,11 @@ def _fallback_poster_spec(brief: str, preferred_template: Optional[str]) -> Post
     pct_match = re.search(r"(\d+%)", cleaned)
     domain_match = re.search(r"\b([a-z0-9-]+\.(?:ai|io|com|dev|app|org))\b", cleaned, re.I)
     metrics = [MetricItem(label="Key Impact", value=pct_match.group(1))] if pct_match else []
+    inf_items = [
+        InfographicItem(label="Efficiency Gain", value=pct_match.group(1) if pct_match else "80%", percent=85),
+        InfographicItem(label="Automation Coverage", value="92%", percent=92),
+        InfographicItem(label="Setup Speed", value="3x Faster", percent=78),
+    ]
     return _clamp_spec(
         {
             "template": preferred_template or "dark-tech",
@@ -305,6 +345,9 @@ def _fallback_poster_spec(brief: str, preferred_template: Optional[str]) -> Post
             "bullets": sentences[2:5],
             "icon_queries": ["zap", "shield-check", "rocket"],
             "metrics": [m.model_dump() for m in metrics],
+            "infographic_type": "bars",
+            "infographic_title": "Performance Snapshot",
+            "infographic_items": [item.model_dump() for item in inf_items],
             "image_query": "server",
             "cta": "Learn More",
             "footer_note": domain_match.group(1).lower() if domain_match else "",
@@ -312,6 +355,105 @@ def _fallback_poster_spec(brief: str, preferred_template: Optional[str]) -> Post
         },
         preferred_template,
     )
+
+
+def _render_infographic_svg(
+    spec: PosterSpec,
+    fg: str,
+    muted: str,
+    card_bg: str,
+    border: str,
+) -> str:
+    esc = html.escape
+    accent = spec.accent_hex
+    items = spec.infographic_items[:4]
+    if not items:
+        return ""
+
+    if spec.infographic_type == "donut":
+        primary = items[0]
+        pct = max(5, min(100, primary.percent))
+        r = 56
+        circ = 2 * 3.14159 * r
+        dash = circ * (pct / 100.0)
+        gap = circ - dash
+        legend_rows = "".join(
+            f"""
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid {border};">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <span style="width:10px;height:10px;border-radius:999px;background:{accent if idx == 0 else muted};display:inline-block;"></span>
+                <span style="font-size:19px;font-weight:600;color:{fg};">{esc(it.label)}</span>
+              </div>
+              <span style="font-size:19px;font-weight:800;color:{accent};">{esc(it.value)}</span>
+            </div>
+            """
+            for idx, it in enumerate(items[:3])
+        )
+        return f"""
+        <div style="padding:22px 26px;border-radius:20px;background:{card_bg};border:1px solid {border};">
+          <div style="font-size:15px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:{accent};margin-bottom:14px;">
+            {esc(spec.infographic_title)}
+          </div>
+          <div style="display:flex;align-items:center;gap:28px;">
+            <svg width="144" height="144" viewBox="0 0 144 144" style="flex-shrink:0;">
+              <circle cx="72" cy="72" r="{r}" fill="none" stroke="{border}" stroke-width="14" />
+              <circle cx="72" cy="72" r="{r}" fill="none" stroke="{accent}" stroke-width="14"
+                stroke-linecap="round" stroke-dasharray="{dash:.1f} {gap:.1f}"
+                transform="rotate(-90 72 72)" />
+              <text x="72" y="79" text-anchor="middle" fill="{fg}" font-size="28" font-weight="800" font-family="Inter, sans-serif">{esc(primary.value)}</text>
+            </svg>
+            <div style="flex:1;">{legend_rows}</div>
+          </div>
+        </div>
+        """
+
+    if spec.infographic_type == "steps":
+        step_cards = ""
+        for idx, it in enumerate(items[:3]):
+            arrow = f'<div style="font-size:24px;color:{accent};font-weight:800;padding:0 4px;">&rarr;</div>' if idx < min(len(items), 3) - 1 else ""
+            step_cards += f"""
+            <div style="flex:1;padding:16px;border-radius:16px;background:{accent}12;border:1px solid {accent}33;">
+              <div style="font-size:14px;font-weight:800;color:{accent};margin-bottom:6px;">STEP {idx + 1}</div>
+              <div style="font-size:20px;font-weight:700;color:{fg};line-height:1.25;">{esc(it.label)}</div>
+              <div style="font-size:16px;font-weight:600;color:{muted};margin-top:6px;">{esc(it.value)}</div>
+            </div>
+            {arrow}
+            """
+        return f"""
+        <div style="padding:22px 26px;border-radius:20px;background:{card_bg};border:1px solid {border};">
+          <div style="font-size:15px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:{accent};margin-bottom:14px;">
+            {esc(spec.infographic_title)}
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            {step_cards}
+          </div>
+        </div>
+        """
+
+    # Default: "bars" horizontal comparison chart with crisp SVG bars
+    bars_html = ""
+    for it in items[:3]:
+        bar_w = max(12, min(100, it.percent))
+        bars_html += f"""
+        <div style="margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;">
+            <span style="font-size:19px;font-weight:600;color:{fg};">{esc(it.label)}</span>
+            <span style="font-size:19px;font-weight:800;color:{accent};">{esc(it.value)}</span>
+          </div>
+          <svg width="100%" height="14" viewBox="0 0 860 14" preserveAspectRatio="none" style="display:block;">
+            <rect x="0" y="0" width="860" height="14" rx="7" fill="{border}" />
+            <rect x="0" y="0" width="{int(8.6 * bar_w)}" height="14" rx="7" fill="{accent}" />
+          </svg>
+        </div>
+        """
+    return f"""
+    <div style="padding:22px 26px;border-radius:20px;background:{card_bg};border:1px solid {border};">
+      <div style="font-size:15px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:{accent};margin-bottom:14px;">
+        {esc(spec.infographic_title)}
+      </div>
+      {bars_html}
+    </div>
+    """
 
 
 def render_poster_html(
@@ -348,46 +490,35 @@ def render_poster_html(
     bg_layer = ""
     if hero_image_url and not hero_image_url.startswith("data:image/png;base64,"):
         bg_layer = f"""
-        <div style="position:absolute;inset:0;background-image:url('{esc(hero_image_url)}');background-size:cover;background-position:center;opacity:0.24;z-index:0;"></div>
+        <div style="position:absolute;inset:0;background-image:url('{esc(hero_image_url)}');background-size:cover;background-position:center;opacity:0.22;z-index:0;"></div>
         <div style="position:absolute;inset:0;background:{scrim};z-index:0;"></div>
         """
 
     product_img_html = ""
     if hero_image_url and hero_image_url.startswith("data:image/"):
         product_img_html = f"""
-        <div style="width:220px;height:220px;border-radius:24px;background:{card_bg};border:1px solid {border};display:flex;align-items:center;justify-content:center;padding:16px;flex-shrink:0;">
+        <div style="width:200px;height:200px;border-radius:24px;background:{card_bg};border:1px solid {border};display:flex;align-items:center;justify-content:center;padding:14px;flex-shrink:0;">
           <img src="{hero_image_url}" alt="Product visual" style="max-width:100%;max-height:100%;object-fit:contain;" />
         </div>
         """
 
-    metrics_html = ""
-    if spec.metrics:
-        metric_cards = "".join(
-            f"""
-            <div style="flex:1;max-width:340px;padding:20px 24px;border-radius:18px;background:{card_bg};border:1px solid {border};">
-              <div style="font-size:40px;font-weight:800;color:{accent};line-height:1.1;">{esc(m.value)}</div>
-              <div style="font-size:20px;color:{muted};margin-top:6px;font-weight:600;">{esc(m.label)}</div>
-            </div>
-            """
-            for m in spec.metrics[:3]
-        )
-        metrics_html = f'<div style="display:flex;gap:16px;margin-top:28px;">{metric_cards}</div>'
+    infographic_html = _render_infographic_svg(spec, fg, muted, card_bg, border)
 
     bullet_html = "\n".join(
         f"""
-        <div style="display:flex;align-items:center;gap:18px;padding:20px 24px;border-radius:20px;background:{card_bg};border:1px solid {border};">
-          <div style="width:46px;height:46px;border-radius:14px;background:{accent}18;border:1px solid {accent}44;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        <div style="display:flex;align-items:center;gap:16px;padding:16px 22px;border-radius:18px;background:{card_bg};border:1px solid {border};">
+          <div style="width:42px;height:42px;border-radius:12px;background:{accent}18;border:1px solid {accent}44;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
             {icon_svgs[i] if i < len(icon_svgs) and icon_svgs[i] else f'<div style="width:12px;height:12px;border-radius:999px;background:{accent};"></div>'}
           </div>
-          <div style="font-size:26px;line-height:1.35;font-weight:500;color:{fg};">{esc(b)}</div>
+          <div style="font-size:23px;line-height:1.32;font-weight:500;color:{fg};">{esc(b)}</div>
         </div>
         """
         for i, b in enumerate(spec.bullets)
     )
 
-    credit_html = f'<span style="font-size:15px;color:{muted};display:block;margin-top:4px;">Photo: {esc(image_credit)}</span>' if image_credit else ""
+    credit_html = f'<span style="font-size:14px;color:{muted};display:block;margin-top:4px;">Photo: {esc(image_credit)}</span>' if image_credit else ""
     footer_right = (
-        f'<div style="text-align:right;font-size:22px;color:{muted};font-weight:600;">{esc(spec.footer_note)}{credit_html}</div>'
+        f'<div style="text-align:right;font-size:20px;color:{muted};font-weight:600;">{esc(spec.footer_note)}{credit_html}</div>'
         if (spec.footer_note or image_credit)
         else ""
     )
@@ -405,7 +536,7 @@ def render_poster_html(
       background: {bg};
       color: {fg};
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
-      padding: 76px;
+      padding: 68px;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
@@ -418,29 +549,30 @@ def render_poster_html(
   {bg_layer}
   <div class="content">
     <div>
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:28px;">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:24px;">
         <div style="flex:1;">
-          <div style="display:inline-block;padding:10px 22px;border-radius:999px;background:{accent}22;border:1px solid {accent}66;color:{accent};font-size:20px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:28px;">
+          <div style="display:inline-block;padding:9px 20px;border-radius:999px;background:{accent}22;border:1px solid {accent}66;color:{accent};font-size:18px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:22px;">
             {esc(spec.badge)}
           </div>
-          <h1 style="font-size:66px;line-height:1.08;font-weight:800;letter-spacing:-0.03em;margin-bottom:22px;">
+          <h1 style="font-size:60px;line-height:1.08;font-weight:800;letter-spacing:-0.03em;margin-bottom:18px;">
             {esc(spec.headline)}
           </h1>
-          <p style="font-size:28px;line-height:1.42;color:{muted};max-width:860px;">
+          <p style="font-size:26px;line-height:1.38;color:{muted};max-width:860px;">
             {esc(spec.subhead)}
           </p>
         </div>
         {product_img_html}
       </div>
-      {metrics_html}
     </div>
 
-    <div style="display:flex;flex-direction:column;gap:16px;">
+    {infographic_html}
+
+    <div style="display:flex;flex-direction:column;gap:12px;">
       {bullet_html}
     </div>
 
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:24px;padding-top:30px;border-top:1px solid {border};">
-      <div style="padding:18px 32px;border-radius:16px;background:{accent};color:#ffffff;font-size:24px;font-weight:700;white-space:nowrap;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:24px;padding-top:24px;border-top:1px solid {border};">
+      <div style="padding:16px 30px;border-radius:16px;background:{accent};color:#ffffff;font-size:23px;font-weight:700;white-space:nowrap;">
         {esc(spec.cta)} &rarr;
       </div>
       {footer_right}
@@ -471,7 +603,7 @@ async def render_poster_png(html_content: str) -> tuple[Optional[str], str]:
 def health():
     return {
         "status": "ok",
-        "version": "2.1",
+        "version": "2.2",
         "groq_configured": bool(os.getenv("GROQ_API_KEY", "").strip()),
         "summary_char_threshold": SUMMARY_CHAR_THRESHOLD,
     }
@@ -527,11 +659,13 @@ async def generate_poster(req: GenerateRequest):
                     response_format={"type": "json_object"},
                 ),
                 instructions=[
-                    "You design high-converting 1080x1350 marketing posters. Output ONLY a valid JSON object.",
-                    "Keys: template ('dark-tech', 'clean-light', or 'bold-gradient'), badge (<=30 chars), headline (<=70 chars), subhead (<=140 chars), bullets (3 concise items <=80 chars each), icon_queries (3 Lucide icon names like 'zap', 'shield-check', 'rocket'), metrics (up to 3 {label, value} KPI objects extracted from numbers in the brief), image_query (1-2 word literal photo noun like 'laptop' or 'server'), cta (natural CTA from the user's brief <=30 chars), footer_note (brand/domain from the brief or empty string), accent_hex.",
+                    "You design high-converting 1080x1350 infographic marketing posters. Output ONLY a valid JSON object.",
+                    "Automatically choose the best visual theme ('dark-tech', 'clean-light', or 'bold-gradient') and accent_hex for the topic—no template preset is required.",
+                    "Always include a rich visual infographic in the poster: pick infographic_type ('bars' for comparisons/metrics, 'donut' for percentage highlight, or 'steps' for a 3-step workflow), infographic_title (<=30 chars), and 3 infographic_items ([{label, value, percent (10-100)}]).",
+                    "All JSON keys: template, badge (<=30 chars), headline (<=68 chars), subhead (<=130 chars), bullets (3 concise items <=75 chars each), icon_queries (3 Lucide icon names like 'zap', 'shield-check', 'rocket'), metrics (optional up to 3 {label, value}), infographic_type, infographic_title, infographic_items, image_query (1-2 word literal photo noun like 'laptop' or 'server'), cta (natural CTA from the user's brief <=30 chars), footer_note (brand/domain from the brief or empty string), accent_hex.",
                 ],
             )
-            prompt = f"Preferred template: {req.template or 'auto'}\n\nBrief:\n{effective_brief}"
+            prompt = f"Design a natural, infographic-rich poster for this brief:\n\n{effective_brief}"
             if vision_context:
                 prompt += f"\n\nUploaded product image analysis:\n{vision_context}"
 
@@ -547,7 +681,7 @@ async def generate_poster(req: GenerateRequest):
                     step="agno_poster_agent",
                     status="completed",
                     duration_ms=int((time.perf_counter() - t1) * 1000),
-                    detail="Generated & validated PosterSpec via Agno + Groq (gpt-oss-120b)",
+                    detail=f"Generated '{spec.infographic_type}' infographic & PosterSpec via Agno + Groq (gpt-oss-120b)",
                 )
             )
         except Exception as exc:
@@ -603,7 +737,7 @@ async def generate_poster(req: GenerateRequest):
             step="html_template_render",
             status="completed",
             duration_ms=int((time.perf_counter() - t2) * 1000),
-            detail=f"Built sanitized 1080x1350 '{spec.template}' HTML with icons & KPI strip",
+            detail=f"Built sanitized 1080x1350 '{spec.template}' HTML with '{spec.infographic_type}' SVG infographic",
         )
     )
 

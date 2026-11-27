@@ -15,7 +15,7 @@
         </div>
         <h1 class="text-2xl font-extrabold tracking-tight">Poster AI Agent v2</h1>
         <p class="text-xs text-zinc-500 mt-1">
-          Summarization guard, dynamic KPI infographics, copyright-free icons &amp; stock photos, Groq Vision, and in-browser background removal.
+          Summarization guard, SVG infographics (bars, donut &amp; step flows), copyright-free icons &amp; stock photos, Groq Vision, and in-browser background removal.
         </p>
       </div>
       <div class="flex items-center gap-2.5">
@@ -63,16 +63,6 @@
             <input id="stockToggle" type="checkbox" checked class="rounded border-zinc-300" />
             <span>Auto-fetch copyright-free Wikimedia photo if no image uploaded</span>
           </label>
-        </div>
-
-        <div class="space-y-1.5">
-          <label for="template" class="text-xs font-semibold uppercase tracking-wider text-zinc-400">Template</label>
-          <select id="template" class="w-full rounded-xl border border-zinc-200 px-3 py-2 text-xs font-medium bg-white">
-            <option value="">Auto (Agent chooses)</option>
-            <option value="dark-tech">Dark Tech</option>
-            <option value="clean-light">Clean Light</option>
-            <option value="bold-gradient">Bold Gradient</option>
-          </select>
         </div>
 
         <button id="generateBtn" type="button" onclick="generatePoster()"
@@ -195,7 +185,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             brief,
-            template: document.getElementById("template").value || null,
+            template: null,
             image_data_url: uploadedImageDataUrl,
             include_stock_image: document.getElementById("stockToggle").checked,
             render_png: true

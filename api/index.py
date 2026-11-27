@@ -256,6 +256,7 @@ async def render_poster_png(html_content: str) -> tuple[Optional[str], str]:
 
 
 @app.get("/api/health")
+@app.get("/health")
 def health():
     return {
         "status": "ok",
@@ -265,6 +266,8 @@ def health():
 
 
 @app.post("/api/generate", response_model=GenerateResponse)
+@app.post("/generate", response_model=GenerateResponse)
+@app.post("/", response_model=GenerateResponse)
 async def generate_poster(req: GenerateRequest):
     trace: list[TraceStep] = []
     original_chars = len(req.brief)

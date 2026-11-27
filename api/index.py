@@ -199,7 +199,7 @@ def _condense_with_agno(raw_brief: str) -> tuple[str, bool, str]:
 
         summarizer = Agent(
             name="Brief Summarizer",
-            model=Groq(id="openai/gpt-oss-20b", max_tokens=320, reasoning_effort="low"),
+            model=Groq(id="openai/gpt-oss-20b", max_tokens=320),
             instructions=[
                 "Condense the user's long product/event brief into 3-4 clean sentences (at most 140 words).",
                 "Preserve: target audience, core value proposition, key numbers/stats, 3 benefits, and natural CTA/brand.",
@@ -308,14 +308,15 @@ async def _search_wikimedia(client: httpx.AsyncClient, term: str) -> Optional[st
     for page in pages.values():
         info = (page.get("imageinfo") or [{}])[0]
         thumb = info.get("thumburl") or info.get("url")
-        if thumb and any(thumb.lower().endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp")):
+        clean_thumb = thumb.split("?")[0].lower() if thumb else ""
+        if thumb and any(clean_thumb.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp")):
             return thumb
     return None
 
 
 async def _fetch_wikimedia_image(query: str) -> tuple[Optional[str], Optional[str], str]:
     try:
-        async with httpx.AsyncClient(timeout=4.5, headers={"User-Agent": "PosterAIAgent/2.2"}) as client:
+        async with httpx.AsyncClient(timeout=4.5, headers={"User-Agent": "PosterAIAgent/2.2 (https://chintu-poster-ai.vercel.app)"}) as client:
             for candidate in (query, query.split()[0] if query.split() else "technology", "abstract"):
                 thumb = await _search_wikimedia(client, candidate)
                 if thumb:
@@ -655,8 +656,6 @@ async def generate_poster(req: GenerateRequest):
                 model=Groq(
                     id="openai/gpt-oss-120b",
                     max_tokens=1500,
-                    reasoning_effort="low",
-                    response_format={"type": "json_object"},
                 ),
                 instructions=[
                     "You design high-converting 1080x1350 infographic marketing posters. Output ONLY a valid JSON object.",
